@@ -86,6 +86,14 @@ textarea { width: 100%; min-height: 120px; font: .78rem/1.45 var(--mono); backgr
 details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px }
 details summary { cursor: pointer; font-weight: 600 }
 details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; color: var(--muted) }
+.dks { display: flex; flex-wrap: wrap; gap: 6px }
+.dks:empty { display: none }
+.chip { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden }
+.chip button { border: 0; border-radius: 0; padding: 6px 10px; font: 600 .82rem var(--body); background: var(--chip); color: var(--ink) }
+.chip button small { font: 500 .72rem var(--mono); color: var(--muted); margin-left: 4px }
+.chip.on button { background: var(--blue); color: #fff }
+.chip.on button small { color: #fff; opacity: .8 }
+.chip .x { padding: 6px 9px; border-left: 1px solid var(--line) }
 .sync { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 18px }
 .sync .row { display: flex; flex-wrap: wrap; gap: 12px }
 .connect { display: grid; gap: 8px; margin-top: 10px }
@@ -116,8 +124,9 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     </div>
     <div class="drop" id="dropD">
       <label class="t" for="fileD">2. DKEntries.csv</label>
-      <span class="hint">From DraftKings: My Contests &rarr; Upcoming &rarr; Edit Entries &rarr; Download.</span>
-      <input type="file" id="fileD" accept=".csv,text/csv">
+      <span class="hint">From DraftKings: My Contests &rarr; Upcoming &rarr; Edit Entries &rarr; Download. Add every game's file in the morning; they stay saved on this phone, and the right one is picked when you add an export.</span>
+      <input type="file" id="fileD" accept=".csv,text/csv" multiple>
+      <div class="dks" id="dkList"></div>
       <span class="status" id="statusD">No file yet</span>
     </div>
   </section>
@@ -337,16 +346,68 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     const f = input.files && input.files[0]; if (!f) return;
     const r = new FileReader(); r.onload = () => cb(f.name, String(r.result)); r.readAsText(f);
   }
+  // ---------- Saved DKEntries (one per game, kept on this phone for 3 days) ----------
+  const DKS_KEY = 'sf_dks';
+  const dkStore = {
+    get() { try { return JSON.parse(localStorage.getItem(DKS_KEY) || '[]'); } catch (_) { return []; } },
+    set(v) { try { localStorage.setItem(DKS_KEY, JSON.stringify(v)); return true; } catch (_) { return false; } },
+  };
+  const lockMinutes = r => { const m = (r.time || '').match(/(\d+):(\d+)(AM|PM)/); return m ? ((+m[1] % 12) + (m[3] === 'PM' ? 12 : 0)) * 60 + +m[2] : 0; };
+  let dks = dkStore.get().filter(r => r && r.text && Date.now() - (r.saved || 0) < 3 * 864e5);
+  function dkRecord(name, text) {
+    const dk = parseDK(text);
+    const g = Object.values(dk.pool).find(p => p.game)?.game || '';
+    const [tm, day, time] = g.split(' ');
+    return { name, text, slate: (tm || name).replace('@', ' @ '), day: day || '', time: time || '', entries: dk.entries.length, key: `${tm} ${day}`, saved: Date.now() };
+  }
+  function useDK(rec, how = '') {
+    state.dk = parseDK(rec.text); state.dkName = rec.name; state.dkText = rec.text; state.dkKey = rec.key;
+    $('statusD').textContent = `${rec.slate} · ${rec.entries} reserved entr${rec.entries === 1 ? 'y' : 'ies'}${rec.time ? ' · locks ' + rec.time + ' ET' : ''}${how}`;
+    $('dropD').classList.add('ready'); renderDKs();
+  }
+  function renderDKs() {
+    $('dkList').innerHTML = dks.map((r, i) => `<span class="chip${r.key === state.dkKey ? ' on' : ''}"><button type="button" data-i="${i}">${esc(r.slate)}<small>${esc(r.time.replace(/^0/, ''))}</small></button><button type="button" class="x" data-x="${i}" aria-label="Remove ${esc(r.slate)}">&times;</button></span>`).join('');
+  }
+  function autoMatch() {   // pick the saved DKEntries whose players match the export
+    if (!state.uni || !dks.length) return;
+    const ids = state.uni.slice(0, 25).flatMap(l => [l.cpt, ...l.flex]);
+    const score = rec => { const pool = parseDK(rec.text).pool; return ids.filter(id => pool[id]).length / ids.length; };
+    if (state.dk && ids.filter(id => state.dk.pool[id]).length / ids.length >= 0.95) return;
+    const best = dks.map(r => [r, score(r)]).sort((a, b) => b[1] - a[1])[0];
+    if (best && best[1] >= 0.95) useDK(best[0], ' · matched to this export');
+  }
+  $('dkList').addEventListener('click', e => {
+    const p = e.target.closest('[data-i]'), x = e.target.closest('[data-x]');
+    if (p) { useDK(dks[+p.dataset.i]); run(); }
+    if (x) {
+      const r = dks.splice(+x.dataset.x, 1)[0]; dkStore.set(dks);
+      if (r && r.key === state.dkKey) { state.dk = null; state.dkKey = null; $('statusD').textContent = 'No file yet'; $('dropD').classList.remove('ready'); }
+      renderDKs(); run();
+    }
+  });
+
   $('fileU').addEventListener('change', e => readFile(e.target, (n, t) => {
-    try { state.uni = parseUniverse(t); state.uniName = n; state.uniText = t; $('statusU').textContent = `${n} · ${state.uni.length.toLocaleString()} lineups`; $('dropU').classList.add('ready'); }
+    try { state.uni = parseUniverse(t); state.uniName = n; state.uniText = t; $('statusU').textContent = `${n} · ${state.uni.length.toLocaleString()} lineups`; $('dropU').classList.add('ready'); autoMatch(); }
     catch (err) { state.uni = null; $('statusU').textContent = err.message; $('dropU').classList.remove('ready'); }
     run();
   }));
-  $('fileD').addEventListener('change', e => readFile(e.target, (n, t) => {
-    try { state.dk = parseDK(t); state.dkName = n; state.dkText = t; $('statusD').textContent = `${n} · ${Object.keys(state.dk.pool).length} players, ${state.dk.entries.length} reserved entries`; $('dropD').classList.add('ready'); }
-    catch (err) { state.dk = null; $('statusD').textContent = err.message; $('dropD').classList.remove('ready'); }
-    run();
-  }));
+  $('fileD').addEventListener('change', async e => {
+    const files = [...(e.target.files || [])]; if (!files.length) return;
+    const texts = await Promise.all(files.map(f => f.text().then(t => [f.name, t])));
+    let last = null, errs = [];
+    for (const [n, t] of texts) {
+      try { const rec = dkRecord(n, t); dks = dks.filter(d => d.key !== rec.key); dks.push(rec); last = rec; }
+      catch (err) { errs.push(`${n}: ${err.message}`); }
+    }
+    dks.sort((a, b) => a.day.localeCompare(b.day) || lockMinutes(a) - lockMinutes(b));
+    const kept = dkStore.set(dks);
+    if (last) { state.dk = null; autoMatch(); if (!state.dk) useDK(last); }
+    if (errs.length) $('statusD').textContent = errs.join(' · ');
+    else if (!kept) $('statusD').textContent += ' · this browser could not keep it for later';
+    e.target.value = ''; renderDKs(); run();
+  });
+  renderDKs();
+  if (dks.length) { const today = dks.filter(r => r.day === new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })); useDK((today[0] || dks[dks.length - 1])); }
 
   let dlPromise = null;
   const getDownloads = () => {
