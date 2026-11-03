@@ -86,6 +86,17 @@ textarea { width: 100%; min-height: 120px; font: .78rem/1.45 var(--mono); backgr
 details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px }
 details summary { cursor: pointer; font-weight: 600 }
 details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; color: var(--muted) }
+.sync { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 18px }
+.sync .row { display: flex; flex-wrap: wrap; gap: 12px }
+.connect { display: grid; gap: 8px; margin-top: 10px }
+.connect input[type=text], .connect input[type=password] { font: .9rem var(--mono); padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); width: 100%; min-width: 0 }
+.board { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px }
+.board table { border-collapse: collapse; width: 100%; font-size: .86rem; font-variant-numeric: tabular-nums }
+.board th, .board td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap }
+.board th:first-child, .board td:first-child { text-align: left }
+.board th { font: 600 .74rem var(--body); text-transform: uppercase; letter-spacing: .06em; color: var(--muted) }
+.board .pos { color: var(--ok) } .board .neg { color: var(--bad) }
+.board caption { text-align: left; padding: 10px; font-weight: 600 }
 @media (max-width: 520px) { .lu { grid-template-columns: 34px 1fr } .lu .meta { grid-column: 2; text-align: left } h1 { font-size: 1.9rem } }
 @media (prefers-reduced-motion: no-preference) { .drop { transition: border-color .2s } }
 </style>
@@ -141,6 +152,32 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
       <li>Keep the pick log if you track results: it records which rows you played.</li>
     </ol>
   </details>
+
+  <section class="sync" aria-label="Your repo">
+    <h2>Your repo</h2>
+    <p class="hint" id="syncState">Not connected. Connect once and every saved slate is stored and scored in your private repo.</p>
+    <div class="row">
+      <div class="drop ready-able" style="flex:1 1 280px">
+        <label class="t" for="fileS">After the game: add results</label>
+        <span class="hint">The standings CSV from DraftKings (<code>contest-standings-&lt;id&gt;.csv</code>).</span>
+        <input type="file" id="fileS" accept=".csv,text/csv">
+        <span class="status" id="statusS"></span>
+      </div>
+    </div>
+    <span class="msg" id="syncMsg" role="status"></span>
+    <div id="board"></div>
+    <details id="connectBox">
+      <summary>Connect to GitHub</summary>
+      <div class="connect">
+        <label for="ghRepo">Repo</label>
+        <input id="ghRepo" type="text" value="SKU999/nhl-showdown-engine" autocomplete="off" spellcheck="false">
+        <label for="ghToken">Access token</label>
+        <input id="ghToken" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
+        <div class="actions"><button id="btnConnect">Connect</button><button id="btnForget">Disconnect</button></div>
+        <p class="hint">Create it at GitHub &rarr; Settings &rarr; Developer settings &rarr; Fine-grained tokens. Repository access: only <b>nhl-showdown-engine</b>. Permission: <b>Contents: Read and write</b>. It stays in this browser only; revoke it on GitHub anytime.</p>
+      </div>
+    </details>
+  </section>
 </div>
 
 <script>
@@ -306,7 +343,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     run();
   }));
   $('fileD').addEventListener('change', e => readFile(e.target, (n, t) => {
-    try { state.dk = parseDK(t); state.dkName = n; $('statusD').textContent = `${n} · ${Object.keys(state.dk.pool).length} players, ${state.dk.entries.length} reserved entries`; $('dropD').classList.add('ready'); }
+    try { state.dk = parseDK(t); state.dkName = n; state.dkText = t; $('statusD').textContent = `${n} · ${Object.keys(state.dk.pool).length} players, ${state.dk.entries.length} reserved entries`; $('dropD').classList.add('ready'); }
     catch (err) { state.dk = null; $('statusD').textContent = err.message; $('dropD').classList.remove('ready'); }
     run();
   }));
@@ -338,7 +375,130 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
       else { $('csvOut').hidden = false; $('msg').textContent = 'Could not save here. Copy the CSV below instead.'; $('msg').className = 'msg bad'; }
     }
   }
-  $('btnSave').addEventListener('click', () => offer(`DKEntries_${slug()}_${stamp()}_top1.csv`, state.csv));
+  // ---------- GitHub storage ----------
+  const LS = { get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }, del(k) { try { localStorage.removeItem(k); } catch (_) {} } };
+  const gh = { repo: LS.get('sf_repo') || 'SKU999/nhl-showdown-engine', token: LS.get('sf_token') || '' };
+  $('ghRepo').value = gh.repo;
+  const sync = (t, k = '') => { $('syncMsg').textContent = t; $('syncMsg').className = 'msg' + (k ? ' ' + k : ''); };
+  async function api(path, opts = {}) {
+    const r = await fetch(`https://api.github.com/repos/${gh.repo}${path}`, { ...opts, headers: { Authorization: `Bearer ${gh.token}`, Accept: 'application/vnd.github+json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
+    if (!r.ok) { const e = new Error(`GitHub said ${r.status}`); e.status = r.status; throw e; }
+    return r.status === 204 ? null : r.json();
+  }
+  function b64(text) { const bytes = new TextEncoder().encode(text); let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); }
+  async function readRepoFile(path) {
+    try { const j = await api(`/contents/${path}?ref=main`); return new TextDecoder().decode(Uint8Array.from(atob(j.content.replace(/\n/g, '')), c => c.charCodeAt(0))); }
+    catch (e) { if (e.status === 404) return null; throw e; }
+  }
+  async function commitFiles(files, message) {   // files: {path: text}
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const ref = await api('/git/ref/heads/main');
+        const base = await api(`/git/commits/${ref.object.sha}`);
+        const tree = [];
+        for (const [path, text] of Object.entries(files)) {
+          const blob = await api('/git/blobs', { method: 'POST', body: JSON.stringify({ content: b64(text), encoding: 'base64' }) });
+          tree.push({ path, mode: '100644', type: 'blob', sha: blob.sha });
+        }
+        const t = await api('/git/trees', { method: 'POST', body: JSON.stringify({ base_tree: base.tree.sha, tree }) });
+        const c = await api('/git/commits', { method: 'POST', body: JSON.stringify({ message, tree: t.sha, parents: [ref.object.sha] }) });
+        await api('/git/refs/heads/main', { method: 'PATCH', body: JSON.stringify({ sha: c.sha }) });
+        return c;
+      } catch (e) { if (attempt === 1 || e.status !== 422) throw e; }
+    }
+  }
+  const ghReason = e => e.status === 401 ? 'The token was refused. Make a new one and connect again.'
+    : e.status === 403 || e.status === 404 ? 'The token cannot write to that repo. Check the repo name and that the token has Contents: Read and write on it.'
+    : 'Could not reach GitHub. Check your connection and try again.';
+
+  function slateMeta() {
+    const D = state.dk; const P = D.pool;
+    const g = Object.values(P).find(p => p.game)?.game || '';          // "VGK@BOS 11/02/2026 07:00PM ET"
+    const [teams, day, time] = g.split(' ');
+    const [mm, dd, yyyy] = (day || '').split('/');
+    const [away, home] = (teams || '').split('@');
+    const date = `${yyyy}-${mm}-${dd}`;
+    const m = (time || '').match(/(\d+):(\d+)(AM|PM)/); let hh = m ? (+m[1] % 12) + (m[3] === 'PM' ? 12 : 0) : 0;
+    const off = (+mm >= 4 && +mm <= 10) ? '-04:00' : '-05:00';
+    const by = {}; D.entries.forEach(e => (by[e.contestId] ||= { name: e.contest, fee: e.fee, n: 0 }).n++);
+    const main = Object.entries(by).sort((a, b) => b[1].n - a[1].n)[0] || [null, { name: '', n: state.picks.length }];
+    const nm = main[1].name || '';
+    const kind = /\$3K Poke Check/.test(nm) ? '3k_poke_check' : /\$3K Overload/.test(nm) ? '3k_overload' : /\$4K Overload/.test(nm) ? '4k_overload'
+      : (nm.match(/\$(\d+K) ([A-Za-z ]+?)(\s*\[|\s*\(|$)/) || [, '', 'contest']).slice(1, 3).join('_').toLowerCase().replace(/\s+/g, '_');
+    return { dir: `${(away || 'x').toLowerCase()}-${(home || 'y').toLowerCase()}-${date}`,
+      json: { matchup: `${away} @ ${home}`, lock: `${date}T${String(hh).padStart(2, '0')}:${m ? m[2] : '00'}:00${off}`,
+        contest_id: main[0] ? +main[0] : null, contest: kind, entries: main[1].n, contest_ids: Object.keys(by).map(Number), live: true, source: 'showdown-filler' } };
+  }
+
+  async function storeSlate() {
+    if (!gh.token || !state.dk || !state.uni) return;
+    const meta = slateMeta(), now = new Date(), ts = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+    let sha = null; try { const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(state.uniText)); sha = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join(''); } catch (_) {}
+    const log = { created_utc: now.toISOString(), slate: meta.dir, selector: 'top_rows', n: state.picks.length, universe_file: state.uniName, universe_sha256: sha,
+      picks: state.picks.map(l => ({ row: l.row, cpt: l.cpt, flex: l.flex, proj: l.proj, top1: l.top1, sal: l.sal })) };
+    let index = {}; try { index = JSON.parse(await readRepoFile('data/live_index.json') || '{}'); } catch (_) { index = {}; }
+    meta.json.contest_ids.forEach(id => { index[id] = meta.dir; });
+    sync('Saving this slate to your repo…');
+    try {
+      await commitFiles({
+        [`data/slates/${meta.dir}/universe.csv`]: state.uniText,
+        [`data/slates/${meta.dir}/dkentries.csv`]: state.dkText,
+        [`data/slates/${meta.dir}/slate.json`]: JSON.stringify(meta.json, null, 1) + '\n',
+        [`logs/${ts}_${meta.dir}_top_rows_${state.picks.length}.json`]: JSON.stringify(log, null, 1) + '\n',
+        'data/live_index.json': JSON.stringify(index, null, 1) + '\n',
+      }, `${meta.json.matchup} pre-lock: universe, DKEntries, Top 1% picks (from Showdown Entry Filler)`);
+      sync(`Saved ${meta.json.matchup} to your repo at ${now.toLocaleTimeString()}, before lock.`, 'ok');
+    } catch (e) { sync('Slate not saved to your repo: ' + ghReason(e), 'bad'); }
+  }
+
+  $('fileS').addEventListener('change', e => readFile(e.target, async (n, t) => {
+    if (!gh.token) { $('statusS').textContent = 'Connect to GitHub first (below).'; return; }
+    const id = (n.match(/(\d{9})/) || [])[1];
+    if (!/^﻿?Rank,EntryId,EntryName/.test(t)) { $('statusS').textContent = 'This is not a DraftKings standings file.'; return; }
+    if (!id) { $('statusS').textContent = 'Could not find the contest ID in the file name (contest-standings-<id>.csv).'; return; }
+    try {
+      const index = JSON.parse(await readRepoFile('data/live_index.json') || '{}');
+      const dir = index[id];
+      const files = { [`data/standings/${id}.csv`]: t };
+      if (dir) files[`data/slates/${dir}/standings.csv`] = t;
+      sync('Saving results…');
+      await commitFiles(files, `Results for contest ${id}${dir ? ' (' + dir + ')' : ''} (from Showdown Entry Filler)`);
+      $('statusS').textContent = `${n} saved${dir ? ' to ' + dir : ''}.`;
+      sync(dir ? 'Results saved. Scoring runs in your repo; the scoreboard below updates in a few minutes.' : 'Saved the standings, but no slate in your repo has this contest ID, so it was not scored.', dir ? 'ok' : '');
+      setTimeout(loadBoard, 150000);
+    } catch (err) { sync('Results not saved: ' + ghReason(err), 'bad'); }
+  }));
+
+  const money = v => (v < 0 ? '−$' : '+$') + Math.abs(Math.round(v)).toLocaleString();
+  async function loadBoard() {
+    if (!gh.token) { $('board').innerHTML = ''; return; }
+    try {
+      const txt = await readRepoFile('scoreboard.json'); if (!txt) { $('board').innerHTML = '<p class="hint">No scoreboard yet. It appears after the first slate with results.</p>'; return; }
+      const sb = JSON.parse(txt); const g = sb.groups.out_of_sample || {};
+      const names = { top_rows: 'Top 1% rows', core51: 'core51', top_roi: 'Top ROI', v22: 'v2.2', top_proj: 'Top projection', you: 'Your entries' };
+      const rows = Object.entries(g).filter(([, v]) => v.fee).sort((a, b) => (b[1].won - b[1].fee) - (a[1].won - a[1].fee));
+      const last = (sb.slates || []).slice(-5).reverse();
+      $('board').innerHTML = `<div class="board"><table><caption>Scoreboard: ${sb.n_out_of_sample} fair-test slates · updated ${new Date(sb.updated).toLocaleString()}</caption>
+        <tr><th>Method</th><th>Net</th><th>ROI</th></tr>${rows.map(([k, v]) => `<tr><td>${esc(names[k] || k)}</td><td class="${v.won >= v.fee ? 'pos' : 'neg'}">${money(v.won - v.fee)}</td><td>${Math.round(100 * (v.won / v.fee - 1))}%</td></tr>`).join('')}</table></div>
+        <div class="board"><table><caption>Latest slates</caption><tr><th>Slate</th><th>1st</th><th>Top 1%</th><th>core51</th><th>You</th></tr>${last.map(s => {
+          const cell = r => r ? `<td class="${r.won >= r.fee ? 'pos' : 'neg'}">${money(r.won - r.fee)}</td>` : '<td>–</td>';
+          return `<tr><td>${esc(s.matchup)} <span class="hint">${esc(s.slate.slice(-10))}</span></td><td>${s.winner ?? ''}</td>${cell(s.results.top_rows)}${cell(s.results.core51)}${cell(s.results.you)}</tr>`; }).join('')}</table></div>`;
+    } catch (e) { $('board').innerHTML = `<p class="hint">${esc(ghReason(e))}</p>`; }
+  }
+  function showConn() {
+    $('syncState').textContent = gh.token ? `Connected to ${gh.repo}. Saving a slate also stores it there; results get scored automatically.` : 'Not connected. Connect once and every saved slate is stored and scored in your private repo.';
+    $('connectBox').open = !gh.token; loadBoard();
+  }
+  $('btnConnect').addEventListener('click', async () => {
+    gh.repo = $('ghRepo').value.trim(); gh.token = $('ghToken').value.trim();
+    if (!gh.token) { sync('Paste a token first.', 'bad'); return; }
+    try { await api(''); LS.set('sf_repo', gh.repo); LS.set('sf_token', gh.token); $('ghToken').value = ''; sync('Connected.', 'ok'); showConn(); }
+    catch (e) { gh.token = ''; sync(ghReason(e), 'bad'); }
+  });
+  $('btnForget').addEventListener('click', () => { LS.del('sf_token'); gh.token = ''; sync('Disconnected. The token is removed from this browser.'); showConn(); });
+  showConn();
+
+  $('btnSave').addEventListener('click', () => { offer(`DKEntries_${slug()}_${stamp()}_top1.csv`, state.csv); storeSlate(); });
   $('btnCopy').addEventListener('click', async () => {
     $('csvOut').hidden = false;
     try { await navigator.clipboard.writeText(state.csv); $('msg').textContent = 'CSV copied.'; $('msg').className = 'msg ok'; }
