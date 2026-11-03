@@ -117,6 +117,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
 .board th, .board td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap }
 .board th:first-child, .board td:first-child { text-align: left }
 .board th { font: 600 .74rem var(--body); text-transform: uppercase; letter-spacing: .06em; color: var(--muted) }
+.hint.bad { color: var(--bad) }
 .board .pos { color: var(--ok) } .board .neg { color: var(--bad) }
 .board caption { text-align: left; padding: 10px; font-weight: 600 }
 @media (max-width: 520px) { .lu { grid-template-columns: 34px 1fr } .lu .meta { grid-column: 2; text-align: left } h1 { font-size: 1.9rem } }
@@ -396,7 +397,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     const p = e.target.closest('[data-i]'), x = e.target.closest('[data-x]');
     if (p) { useDK(dks[+p.dataset.i]); run(); }
     if (x) {
-      const r = dks.splice(+x.dataset.x, 1)[0]; dkStore.set(dks);
+      const r = dks.splice(+x.dataset.x, 1)[0]; dkStore.set(dks); if (r) deleteDK(r);
       if (r && r.key === state.dkKey) { state.dk = null; state.dkKey = null; $('statusD').textContent = 'No file yet'; $('dropD').classList.remove('ready'); }
       renderDKs(); run();
     }
@@ -410,9 +411,9 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
   $('fileD').addEventListener('change', async e => {
     const files = [...(e.target.files || [])]; if (!files.length) return;
     const texts = await Promise.all(files.map(f => f.text().then(t => [f.name, t])));
-    let last = null, errs = [];
+    let last = null, errs = [], added = [];
     for (const [n, t] of texts) {
-      try { const rec = dkRecord(n, t); dks = dks.filter(d => d.key !== rec.key); dks.push(rec); last = rec; }
+      try { const rec = dkRecord(n, t); dks = dks.filter(d => d.key !== rec.key); dks.push(rec); last = rec; added.push(rec); }
       catch (err) { errs.push(`${n}: ${err.message}`); }
     }
     dks.sort((a, b) => a.day.localeCompare(b.day) || lockMinutes(a) - lockMinutes(b));
@@ -421,6 +422,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     if (errs.length) $('statusD').textContent = errs.join(' · ');
     else if (!kept) $('statusD').textContent += ' · this browser could not keep it for later';
     e.target.value = ''; renderDKs(); run();
+    if (added.length && gh.token) pushDKs(added);
   });
   renderDKs();
   if (dks.length) { const today = dks.filter(r => r.day === new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })); useDK((today[0] || dks[dks.length - 1])); }
@@ -514,8 +516,50 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
         contest_id: main[0] ? +main[0] : null, contest: kind, entries: main[1].n, contest_ids: Object.keys(by).map(Number), live: true, source: 'showdown-filler' } };
   }
 
+  // Never write to a public repo: pre-lock picks and entries would be visible to anyone.
+  async function checkPrivate() { try { const r = await api(''); gh.private = r.private === true; } catch (_) { gh.private = null; } return gh.private; }
+  async function canStore() {
+    if (!gh.token) return false;
+    if (gh.private !== true) await checkPrivate();
+    if (gh.private === false) { sync(`Not saved: ${gh.repo} is public, so anyone could see your entries and picks. Make it private (repo Settings → General → Danger Zone), then try again.`, 'bad'); return false; }
+    return gh.private === true;
+  }
+  const pendingPath = rec => { const [tm, day] = rec.key.split(' '); const [mm, dd, yy] = (day || '').split('/'); return `data/pending/${(tm || 'x').toLowerCase().replace('@', '-')}-${yy}-${mm}-${dd}.csv`; };
+  async function pushDKs(recs) {
+    if (!(await canStore())) return;
+    sync(`Syncing ${recs.map(r => r.slate).join(', ')} DKEntries to your repo…`);
+    try { await commitFiles(Object.fromEntries(recs.map(r => [pendingPath(r), r.text])), `DKEntries for ${recs.map(r => r.slate).join(', ')} (from Showdown Entry Filler)`); sync('DKEntries synced. Your other devices load them when the page opens.', 'ok'); }
+    catch (e) { sync('DKEntries kept on this device only: ' + ghReason(e), 'bad'); }
+  }
+  async function pullDKs() {
+    if (!gh.token) return;
+    let list = [];
+    try { list = await api('/contents/data/pending?ref=main'); } catch (_) { return; }
+    const cutoff = Date.now() - 3 * 864e5; let got = 0;
+    for (const f of Array.isArray(list) ? list : []) {
+      const m = f.name.match(/(\d{4})-(\d{2})-(\d{2})\.csv$/); if (!m || new Date(`${m[1]}-${m[2]}-${m[3]}T23:59:00`).getTime() < cutoff) continue;
+      try {
+        const text = await readRepoFile(f.path); if (!text) continue;
+        const rec = dkRecord(f.name, text);
+        const mine = dks.find(d => d.key === rec.key);
+        if (mine && mine.text === text) continue;
+        if (mine && mine.saved > Date.now() - 60e3) continue;   // just added here; keep the local copy
+        dks = dks.filter(d => d.key !== rec.key); dks.push(rec); got++;
+      } catch (_) {}
+    }
+    if (!got) return;
+    dks.sort((a, b) => a.day.localeCompare(b.day) || lockMinutes(a) - lockMinutes(b)); dkStore.set(dks);
+    if (state.uni) autoMatch();
+    if (!state.dk && dks.length) useDK(dks.find(r => r.day === new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })) || dks[dks.length - 1]);
+    renderDKs(); run(); sync(`Loaded ${got} DKEntries file${got === 1 ? '' : 's'} from your repo.`, 'ok');
+  }
+  async function deleteDK(rec) {
+    if (!gh.token || gh.private !== true) return;
+    try { const f = await api(`/contents/${pendingPath(rec)}?ref=main`); await api(`/contents/${pendingPath(rec)}`, { method: 'DELETE', body: JSON.stringify({ message: `Remove ${rec.slate} DKEntries`, sha: f.sha }) }); } catch (_) {}
+  }
+
   async function storeSlate() {
-    if (!gh.token || !state.dk || !state.uni) return;
+    if (!state.dk || !state.uni || !(await canStore())) return;
     const meta = slateMeta(), now = new Date(), ts = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
     let sha = null; try { const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(state.uniText)); sha = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join(''); } catch (_) {}
     const log = { created_utc: now.toISOString(), slate: meta.dir, selector: 'top_rows', n: state.picks.length, universe_file: state.uniName, universe_sha256: sha,
@@ -537,6 +581,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
 
   $('fileS').addEventListener('change', e => readFile(e.target, async (n, t) => {
     if (!gh.token) { $('statusS').textContent = 'Connect to GitHub first (below).'; return; }
+    if (!(await canStore())) { $('statusS').textContent = 'Not saved: make your repo private first.'; return; }
     const id = (n.match(/(\d{9})/) || [])[1];
     if (!/^﻿?Rank,EntryId,EntryName/.test(t)) { $('statusS').textContent = 'This is not a DraftKings standings file.'; return; }
     if (!id) { $('statusS').textContent = 'Could not find the contest ID in the file name (contest-standings-<id>.csv).'; return; }
@@ -569,9 +614,13 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
           return `<tr><td>${esc(s.matchup)} <span class="hint">${esc(s.slate.slice(-10))}</span></td><td>${s.winner ?? ''}</td>${cell(s.results.top_rows)}${cell(s.results.core51)}${cell(s.results.you)}</tr>`; }).join('')}</table></div>`;
     } catch (e) { $('board').innerHTML = `<p class="hint">${esc(ghReason(e))}</p>`; }
   }
-  function showConn() {
+  async function showConn() {
     $('syncState').textContent = gh.token ? `Connected to ${gh.repo}. Saving a slate also stores it there; results get scored automatically.` : 'Not connected. Connect once and every saved slate is stored and scored in your private repo.';
     $('connectBox').open = !gh.token; loadBoard();
+    if (!gh.token) return;
+    if ((await checkPrivate()) === false) { $('syncState').textContent = `Connected to ${gh.repo}, but it is PUBLIC. Nothing will be saved there until you make it private (repo Settings → General → Danger Zone → Change visibility).`; $('syncState').className = 'hint bad'; return; }
+    $('syncState').className = 'hint';
+    pullDKs();
   }
   $('btnConnect').addEventListener('click', async () => {
     gh.repo = $('ghRepo').value.trim(); gh.token = $('ghToken').value.trim();
