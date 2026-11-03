@@ -1,0 +1,357 @@
+<title>Showdown Entry Filler</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one narrow working column, like a bench card: steps on top, lineup sheet below, one action bar. */
+:root {
+  --bg: #f3f5f7;          /* rink ice */
+  --surface: #ffffff;
+  --ink: #15202b;
+  --muted: #5b6978;
+  --line: #d8dee5;
+  --red: #c8102e;         /* center red line */
+  --blue: #1f4e9c;        /* blue line */
+  --ok: #1e7a4c;
+  --warn: #9a6200;
+  --bad: #b3261e;
+  --chip: #e8edf3;
+  --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f151b; --surface: #17202a; --ink: #e6ecf2; --muted: #93a2b2; --line: #2a3644;
+  --red: #ff5a6e; --blue: #7aa7ff; --ok: #4fc58a; --warn: #f0b44c; --bad: #ff7a70; --chip: #213040;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #17202a; --ink: #e6ecf2; --muted: #93a2b2; --line: #2a3644;
+  --red: #ff5a6e; --blue: #7aa7ff; --ok: #4fc58a; --warn: #f0b44c; --bad: #ff7a70; --chip: #213040;
+  color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); }
+.wrap { max-width: 860px; margin: 0 auto; padding-block: 28px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 22px; }
+header { display: grid; gap: 6px; border-bottom: 3px solid var(--red); padding-bottom: 14px; position: relative }
+header::after { content: ""; position: absolute; left: 0; right: 0; bottom: -9px; height: 2px; background: var(--blue); opacity: .55 }
+h1 { font: 700 2.3rem/1 var(--display); letter-spacing: .01em; margin: 0; text-wrap: balance; text-transform: uppercase }
+.lede { margin: 0; color: var(--muted); max-width: 62ch }
+h2 { font: 600 1.15rem/1.2 var(--display); text-transform: uppercase; letter-spacing: .06em; margin: 0; color: var(--muted) }
+
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px }
+.drop { background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 8px; min-width: 0 }
+.drop.ready { border-style: solid; border-color: var(--ok) }
+.drop label.t { font-weight: 600 }
+.drop .hint, .lu .hint { color: var(--muted); font-size: .86rem }
+.drop .status { font-size: .86rem; font-family: var(--mono); color: var(--muted); overflow-wrap: anywhere }
+.drop.ready .status { color: var(--ok) }
+input[type=file] { font: inherit; font-size: .86rem; max-width: 100%; color: var(--muted) }
+input[type=file]::file-selector-button { font: 600 .85rem var(--body); border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+  border-radius: 6px; padding: 6px 10px; margin-right: 8px; cursor: pointer }
+
+.checks { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none }
+.checks li { display: grid; grid-template-columns: 20px 1fr; gap: 8px; align-items: start; font-size: .92rem }
+.checks .i { font: 700 .9rem var(--mono); text-align: center }
+.checks .ok .i { color: var(--ok) } .checks .warn .i { color: var(--warn) } .checks .bad .i { color: var(--bad) }
+.checks .bad { color: var(--bad) }
+
+.sheet { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden }
+.sheet-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line) }
+.sheet-head .slate { font: 700 1.5rem/1 var(--display); text-transform: uppercase }
+.badge { font: 600 .72rem var(--body); letter-spacing: .08em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: var(--chip); color: var(--muted) }
+.badge.example { background: transparent; border: 1px solid var(--warn); color: var(--warn) }
+.lu { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px 12px; padding: 12px 14px; border-top: 1px solid var(--line); align-items: start }
+.lu:first-of-type { border-top: 0 }
+.lu .rk { font: 700 1.6rem/1 var(--display); color: var(--red); font-variant-numeric: tabular-nums }
+.lu .rk small { display: block; font: 500 .7rem var(--mono); color: var(--muted); margin-top: 4px }
+.lu .players { min-width: 0; display: flex; flex-wrap: wrap; gap: 6px }
+.p { font-size: .86rem; padding: 3px 8px; border-radius: 6px; background: var(--chip); white-space: nowrap }
+.p.cpt { background: var(--red); color: var(--surface); font-weight: 600 }
+.p .tm { font: 500 .72rem var(--mono); opacity: .75; margin-left: 4px }
+.p.g { box-shadow: inset 0 0 0 1.5px var(--blue) }
+.lu .meta { text-align: right; font: 500 .8rem var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap }
+.lu .meta b { color: var(--ink); font-weight: 600 }
+.entry { font: 500 .74rem var(--mono); color: var(--muted); grid-column: 2 / -1 }
+
+.actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center }
+button { font: 600 .95rem var(--body); border-radius: 8px; padding: 10px 16px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--ink) }
+button.primary { background: var(--blue); border-color: var(--blue); color: #fff }
+button:disabled { opacity: .45; cursor: not-allowed }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--red); outline-offset: 2px }
+.msg { font-size: .9rem; color: var(--muted) }
+.msg.ok { color: var(--ok) } .msg.bad { color: var(--bad) }
+textarea { width: 100%; min-height: 120px; font: .78rem/1.45 var(--mono); background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 10px }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px }
+details summary { cursor: pointer; font-weight: 600 }
+details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; color: var(--muted) }
+@media (max-width: 520px) { .lu { grid-template-columns: 34px 1fr } .lu .meta { grid-column: 2; text-align: left } h1 { font-size: 1.9rem } }
+@media (prefers-reduced-motion: no-preference) { .drop { transition: border-color .2s } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Showdown Entry Filler</h1>
+    <p class="lede">Takes Sim Savant's export, picks rows 1&ndash;5 in Top&nbsp;1% order, and fills them into your reserved DraftKings entries. Files stay in your browser.</p>
+  </header>
+
+  <section class="steps" aria-label="Files">
+    <div class="drop" id="dropU">
+      <label class="t" for="fileU">1. Sim Savant export</label>
+      <span class="hint">The lineup CSV, exported after goalies are confirmed.</span>
+      <input type="file" id="fileU" accept=".csv,text/csv">
+      <span class="status" id="statusU">No file yet</span>
+    </div>
+    <div class="drop" id="dropD">
+      <label class="t" for="fileD">2. DKEntries.csv</label>
+      <span class="hint">From DraftKings: My Contests &rarr; Upcoming &rarr; Edit Entries &rarr; Download.</span>
+      <input type="file" id="fileD" accept=".csv,text/csv">
+      <span class="status" id="statusD">No file yet</span>
+    </div>
+  </section>
+
+  <section aria-label="Checks" style="display:grid;gap:10px">
+    <h2>Checks</h2>
+    <ul class="checks" id="checks"></ul>
+  </section>
+
+  <section class="sheet" aria-label="Lineups">
+    <div class="sheet-head">
+      <span class="slate" id="slateName">No slate loaded</span>
+      <span class="badge" id="sheetBadge">Waiting for files</span>
+    </div>
+    <div id="lineups"></div>
+  </section>
+
+  <section class="actions" aria-label="Save">
+    <button class="primary" id="btnSave" disabled>Save DKEntries upload</button>
+    <button id="btnCopy" disabled>Copy CSV</button>
+    <button id="btnLog" disabled>Save pick log</button>
+    <span class="msg" id="msg" role="status"></span>
+  </section>
+  <textarea id="csvOut" aria-label="Upload CSV text" readonly hidden></textarea>
+
+  <details>
+    <summary>Upload it to DraftKings</summary>
+    <ol>
+      <li>On DraftKings, open My Contests &rarr; Upcoming &rarr; Edit Entries for this slate.</li>
+      <li>Choose Upload and pick the saved <code>DKEntries_&hellip;_top1.csv</code>.</li>
+      <li>Check that each entry shows the captain listed here, then confirm.</li>
+      <li>Keep the pick log if you track results: it records which rows you played.</li>
+    </ol>
+  </details>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const state = { uni: null, uniName: '', uniText: '', dk: null, dkName: '', picks: [], csv: '', slate: '' };
+
+
+  function parseCSV(text) {
+    const rows = []; let row = [], cur = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i], n = text[i + 1];
+      if (q) { if (c === '"' && n === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; }
+      else if (c === '"') q = true;
+      else if (c === ',') { row.push(cur); cur = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && n === '\n') i++; row.push(cur); rows.push(row); row = []; cur = ''; }
+      else cur += c;
+    }
+    if (cur.length || row.length) { row.push(cur); rows.push(row); }
+    return rows;
+  }
+  const num = v => { const x = parseFloat(String(v ?? '').replace(/[%$,]/g, '')); return isNaN(x) ? null : x; };
+  const idOf = v => { const s = String(v ?? '').trim(); const m = s.match(/\((\d+)\)\s*$/); return m ? m[1] : s; };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const csvCell = s => /[",\n]/.test(String(s)) ? '"' + String(s).replace(/"/g, '""') + '"' : String(s);
+
+  function parseUniverse(text) {
+    const rows = parseCSV(text.replace(/^﻿/, ''));
+    const h = rows[0] || [];
+    if (h[0] !== 'CPT') throw new Error('This does not look like a Sim Savant lineup export (first column should be CPT).');
+    const iTop1 = h.findIndex(x => x.startsWith('Top 1%'));
+    const iSal = h.indexOf('Salary'), iStack = h.indexOf('Stack'), iProj = h.indexOf('Proj');
+    if (iTop1 < 0) throw new Error('No "Top 1%" column in this export.');
+    const lineups = [];
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i]; if (!r || !r[0] || !r[0].trim()) continue;
+      lineups.push({ row: lineups.length + 1, cpt: idOf(r[0]), flex: r.slice(1, 6).map(idOf), top1Raw: (r[iTop1] || '').trim(),
+        top1: num(r[iTop1]), sal: num(r[iSal]), stack: (r[iStack] || '').trim(), proj: num(r[iProj]) });
+    }
+    return lineups;
+  }
+
+  function parseDK(text) {
+    const rows = parseCSV(text.replace(/^﻿/, ''));
+    let hdr = -1, off = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const j = rows[i].indexOf('Roster Position');
+      if (j >= 0) { hdr = i; off = rows[i].indexOf('Name + ID'); break; }
+    }
+    if (hdr < 0 || off < 1) throw new Error('No player list found. Use the DKEntries.csv (or DKSalaries.csv) downloaded from DraftKings for this slate.');
+    const H = rows[hdr], col = n => H.indexOf(n);
+    const cName = col('Name'), cId = col('ID'), cRP = col('Roster Position'), cSal = col('Salary'), cGame = col('Game Info'), cTeam = col('TeamAbbrev'), cPos = col('Position');
+    const pool = {};
+    for (let i = hdr + 1; i < rows.length; i++) {
+      const r = rows[i]; const id = (r[cId] || '').trim(); if (!/^\d+$/.test(id)) continue;
+      pool[id] = { id, name: r[cName], rp: r[cRP], sal: num(r[cSal]), game: r[cGame], team: r[cTeam], pos: r[cPos] };
+    }
+    const entries = [];
+    const head = rows[0] || [];
+    if (head[0] === 'Entry ID') {
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i]; if (!/^\d+$/.test((r[0] || '').trim())) continue;
+        entries.push({ entryId: r[0].trim(), contest: r[1], contestId: r[2], fee: r[3], current: r.slice(4, 10).map(idOf).filter(Boolean) });
+      }
+    }
+    return { pool, entries, hasEntries: head[0] === 'Entry ID' };
+  }
+
+  function check(list) {
+    $('checks').innerHTML = list.map(([k, t]) => `<li class="${k}"><span class="i">${k === 'ok' ? '✓' : k === 'warn' ? '!' : '✕'}</span><span>${t}</span></li>`).join('');
+  }
+
+  function renderExample() {
+    $('lineups').innerHTML = `<div class="lu"><div class="rk">&ndash;</div><div class="players"><span class="hint">Your lineups appear here: rows 1&ndash;5 of the Sim Savant export in Top 1% order, with player names, salary and stack from your DKEntries file.</span></div><div class="meta"></div></div>`;
+    check([['warn', 'Add your Sim Savant export and DKEntries.csv to fill tonight\'s entries.']]);
+  }
+
+  function run() {
+    const out = []; state.picks = []; state.csv = '';
+    const U = state.uni, D = state.dk;
+    ['btnSave', 'btnCopy', 'btnLog'].forEach(b => $(b).disabled = true);
+    $('csvOut').hidden = true;
+    if (!U) { renderExample(); return; }
+
+    if (!U.length) { check([['bad', 'The Sim Savant file has no lineups.']]); return; }
+    const filled = U.filter(l => l.top1 !== null).length;
+    if (filled === 0) { check([['bad', 'Top 1% column is empty in this export. The sims did not finish or the wrong export was used. Re-export from Sim Savant before playing.']]); $('lineups').innerHTML = ''; return; }
+    out.push(['ok', `${U.length.toLocaleString()} lineups, Top 1% filled on ${filled.toLocaleString()}.`]);
+    let inversions = 0; for (let i = 1; i < U.length; i++) if ((U[i].top1 ?? -1) > (U[i - 1].top1 ?? -1) + 1e-9) inversions++;
+    const ranked = [...U].sort((a, b) => ((b.top1 ?? -1) - (a.top1 ?? -1)) || (a.row - b.row));
+    out.push(inversions ? ['warn', `File was not in Top 1% order (${inversions} rows out of order); re-sorted by Top 1%, ties kept in file order.`] : ['ok', 'File is in Top 1% order.']);
+
+    // How many lineups: reserved entries per contest, else 5.
+    let groups = [];
+    if (D && D.hasEntries && D.entries.length) {
+      const by = {}; D.entries.forEach(e => (by[e.contestId] ||= { contest: e.contest, contestId: e.contestId, entries: [] }).entries.push(e));
+      groups = Object.values(by);
+    }
+    const need = groups.length ? Math.max(...groups.map(g => g.entries.length)) : 5;
+    const picks = ranked.slice(0, need);
+    if (ranked[need] && picks.length && ranked[need].top1Raw === picks[picks.length - 1].top1Raw)
+      out.push(['warn', `Tie at the cutoff: row ${ranked[need].row} has the same Top 1% (${ranked[need].top1Raw}) as your last pick. The export's own order decides it, which can differ from sorting in the app.`]);
+
+    const P = D ? D.pool : null;
+    if (!D) out.push(['warn', 'No DKEntries.csv yet: names, salary check and entry IDs need it.']);
+    else {
+      const missing = new Set(); picks.forEach(l => [l.cpt, ...l.flex].forEach(id => { if (!P[id]) missing.add(id); }));
+      if (missing.size) { out.push(['bad', `${missing.size} player IDs from the export are not in this DKEntries file. It is probably a different slate. Download DKEntries for this game.`]); check(out); $('lineups').innerHTML = ''; return; }
+      out.push(['ok', 'Every player in the picks matches this DraftKings slate.']);
+      const over = picks.filter(l => [l.cpt, ...l.flex].reduce((s, id) => s + (P[id].sal || 0), 0) > 50000);
+      out.push(over.length ? ['bad', `${over.length} lineup(s) over the $50,000 cap.`] : ['ok', 'All lineups are under the $50,000 cap.']);
+      const g = Object.values(P).find(p => p.game)?.game || '';
+      state.slate = (g.split(' ')[0] || '').replace('@', ' @ ');
+      if (g) out.push(['warn', `Lock: ${esc(g.split(' ').slice(1).join(' '))}. Confirm both starting goalies before uploading.`]);
+      if (!D.hasEntries) out.push(['warn', 'This is a DKSalaries file, not DKEntries: the output is a plain lineup list for new entries, not your reserved ones.']);
+      else if (!groups.length) out.push(['bad', 'No reserved entries in this DKEntries file.']);
+      else groups.forEach(gr => out.push(['ok', `${esc(gr.contest)}: ${gr.entries.length} reserved entr${gr.entries.length === 1 ? 'y' : 'ies'} filled with rows 1&ndash;${gr.entries.length}.`]));
+    }
+    state.picks = picks;
+
+    // Render sheet
+    const name = id => P && P[id] ? P[id] : { name: id, team: '', pos: '' };
+    $('slateName').textContent = state.slate || 'Your slate';
+    $('sheetBadge').textContent = `Top 1% rows 1–${picks.length}`; $('sheetBadge').className = 'badge';
+    $('lineups').innerHTML = picks.map((l, i) => {
+      const c = name(l.cpt), fs = l.flex.map(name);
+      const sal = P ? [l.cpt, ...l.flex].reduce((s, id) => s + (P[id].sal || 0), 0) : l.sal;
+      const teams = {}; [c, ...fs].forEach(p => teams[p.team] = (teams[p.team] || 0) + 1);
+      const stack = P ? `${teams[c.team]}-${6 - teams[c.team]} ${c.team}` : (l.stack || '');
+      const ents = groups.map(g => g.entries[i]).filter(Boolean).map(e => `#${e.entryId}`).join(', ');
+      return `<div class="lu"><div class="rk">${l.row}<small>${esc(l.top1Raw)}</small></div>
+        <div class="players"><span class="p cpt${c.pos === 'G' ? ' g' : ''}">${esc(c.name)}<span class="tm">${esc(c.team)}${c.pos === 'G' ? ' G' : ''}</span></span>${fs.map(f => `<span class="p${f.pos === 'G' ? ' g' : ''}">${esc(f.name)}<span class="tm">${esc(f.team)}${f.pos === 'G' ? ' G' : ''}</span></span>`).join('')}</div>
+        <div class="meta"><b>${sal ? '$' + Math.round(sal).toLocaleString() : ''}</b><br>${esc(stack)}</div>
+        ${ents ? `<div class="entry">Entry ${ents}</div>` : ''}</div>`;
+    }).join('');
+
+    // Build CSV
+    const fmt = id => P && P[id] ? `${P[id].name} (${id})` : id;
+    let lines;
+    if (groups.length) {
+      lines = [['Entry ID', 'Contest Name', 'Contest ID', 'Entry Fee', 'CPT', 'FLEX', 'FLEX', 'FLEX', 'FLEX', 'FLEX']];
+      groups.forEach(g => g.entries.forEach((e, i) => { const l = picks[i]; if (l) lines.push([e.entryId, e.contest, e.contestId, e.fee, fmt(l.cpt), ...l.flex.map(fmt)]); }));
+    } else {
+      lines = [['CPT', 'FLEX', 'FLEX', 'FLEX', 'FLEX', 'FLEX']];
+      picks.forEach(l => lines.push([fmt(l.cpt), ...l.flex.map(fmt)]));
+    }
+    state.csv = lines.map(r => r.map(csvCell).join(',')).join('\n') + '\n';
+    $('csvOut').value = state.csv;
+    const blocked = out.some(([k]) => k === 'bad');
+    check(out);
+    $('btnSave').disabled = blocked || !D; $('btnCopy').disabled = blocked; $('btnLog').disabled = blocked;
+    $('msg').textContent = blocked ? 'Fix the red items before uploading.' : (D ? 'Ready. Save the file, then upload it on DraftKings.' : 'Add DKEntries.csv to fill your reserved entries.');
+    $('msg').className = 'msg' + (blocked ? ' bad' : '');
+  }
+
+  function readFile(input, cb) {
+    const f = input.files && input.files[0]; if (!f) return;
+    const r = new FileReader(); r.onload = () => cb(f.name, String(r.result)); r.readAsText(f);
+  }
+  $('fileU').addEventListener('change', e => readFile(e.target, (n, t) => {
+    try { state.uni = parseUniverse(t); state.uniName = n; state.uniText = t; $('statusU').textContent = `${n} · ${state.uni.length.toLocaleString()} lineups`; $('dropU').classList.add('ready'); }
+    catch (err) { state.uni = null; $('statusU').textContent = err.message; $('dropU').classList.remove('ready'); }
+    run();
+  }));
+  $('fileD').addEventListener('change', e => readFile(e.target, (n, t) => {
+    try { state.dk = parseDK(t); state.dkName = n; $('statusD').textContent = `${n} · ${Object.keys(state.dk.pool).length} players, ${state.dk.entries.length} reserved entries`; $('dropD').classList.add('ready'); }
+    catch (err) { state.dk = null; $('statusD').textContent = err.message; $('dropD').classList.remove('ready'); }
+    run();
+  }));
+
+  let dlPromise = null;
+  const getDownloads = () => {
+    if (!dlPromise) dlPromise = (async () => { try { return (await window.claude?.use?.('downloads')) || null; } catch (_) { return null; } })();
+    return dlPromise;
+  };
+  getDownloads();
+  const slug = () => (state.slate || 'slate').toLowerCase().replace(/\s*@\s*/, '-').replace(/[^a-z0-9-]/g, '');
+  const stamp = () => new Date().toISOString().slice(0, 10);
+
+  async function offer(filename, data) {
+    $('msg').textContent = 'Preparing the file…'; $('msg').className = 'msg';
+    let framed = true; try { framed = window.self !== window.top; } catch (_) { framed = true; }
+    if (!framed || location.protocol === 'file:') {  // its own tab or a local file (not inside Claude): a normal browser download works
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([data], { type: filename.endsWith('.json') ? 'application/json' : 'text/csv' }));
+      a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+      $('msg').textContent = `Saved ${filename} to Downloads.`; $('msg').className = 'msg ok'; return;
+    }
+    let downloads = await getDownloads();
+    if (!downloads) { dlPromise = null; downloads = await getDownloads(); }
+    if (!downloads) { $('csvOut').hidden = false; $('msg').textContent = 'Saving is not available in this view (some phone app views block it). Open this page at claude.ai in Safari or Chrome to save the file, or copy the CSV below.'; $('msg').className = 'msg bad'; return; }
+    try { await downloads.save({ filename, data }); $('msg').textContent = `Saved ${filename}.`; $('msg').className = 'msg ok'; }
+    catch (err) {
+      if (err && err.code === 'declined') { $('msg').textContent = 'Save cancelled.'; $('msg').className = 'msg'; }
+      else { $('csvOut').hidden = false; $('msg').textContent = 'Could not save here. Copy the CSV below instead.'; $('msg').className = 'msg bad'; }
+    }
+  }
+  $('btnSave').addEventListener('click', () => offer(`DKEntries_${slug()}_${stamp()}_top1.csv`, state.csv));
+  $('btnCopy').addEventListener('click', async () => {
+    $('csvOut').hidden = false;
+    try { await navigator.clipboard.writeText(state.csv); $('msg').textContent = 'CSV copied.'; $('msg').className = 'msg ok'; }
+    catch (_) { $('csvOut').focus(); $('csvOut').select(); $('msg').textContent = 'Select the text below and copy it.'; $('msg').className = 'msg'; }
+  });
+  $('btnLog').addEventListener('click', async () => {
+    let sha = null;
+    try { const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(state.uniText)); sha = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join(''); } catch (_) {}
+    const log = { created_utc: new Date().toISOString(), slate: state.slate, selector: 'top_rows', universe_file: state.uniName, universe_sha256: sha,
+      dkentries_file: state.dkName, picks: state.picks.map(l => ({ row: l.row, cpt: l.cpt, flex: l.flex, top1: l.top1Raw, proj: l.proj })) };
+    offer(`picklog_${slug()}_${stamp()}_top1.json`, JSON.stringify(log, null, 1));
+  });
+
+  renderExample();
+})();
+</script>
