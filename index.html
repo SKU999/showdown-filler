@@ -100,6 +100,14 @@ textarea { width: 100%; min-height: 120px; font: .78rem/1.45 var(--mono); backgr
 details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px }
 details summary { cursor: pointer; font-weight: 600 }
 details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; color: var(--muted) }
+.method { display: grid; gap: 6px }
+.mlabel { font: 600 .74rem var(--body); text-transform: uppercase; letter-spacing: .08em; color: var(--muted) }
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface) }
+.seg button { border: 0; border-radius: 0; padding: 10px 12px; text-align: left; display: grid; gap: 2px; background: var(--surface); color: var(--ink) }
+.seg button + button { border-left: 1px solid var(--line) }
+.seg button small { font: 400 .76rem var(--body); color: var(--muted) }
+.seg button[aria-checked="true"] { background: var(--blue); color: #fff }
+.seg button[aria-checked="true"] small { color: #fff; opacity: .85 }
 .dks { display: flex; flex-wrap: wrap; gap: 6px }
 .dks:empty { display: none }
 .chip { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden }
@@ -129,7 +137,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
 <div class="wrap">
   <header>
     <h1>Showdown Entry Filler</h1>
-    <p class="lede">Takes Sim Savant's export, picks rows 1&ndash;5 in Top&nbsp;1% order, and fills them into your reserved DraftKings entries. Files stay in your browser.</p>
+    <p class="lede">Takes Sim Savant's export, picks lineups by core51 or Top&nbsp;1% order, and fills them into your reserved DraftKings entries.</p>
   </header>
 
   <section class="steps" aria-label="Files">
@@ -161,6 +169,14 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     <div id="lineups"></div>
   </section>
 
+  <section class="method" aria-label="Method">
+    <span class="mlabel" id="mlabel">Method</span>
+    <div class="seg" role="radiogroup" aria-labelledby="mlabel">
+      <button type="button" role="radio" data-m="core51" id="mCore">core51<small>5-1 + own goalie, 3/2 split</small></button>
+      <button type="button" role="radio" data-m="top_rows" id="mTop">Top 1% rows<small>first rows of the export</small></button>
+    </div>
+  </section>
+
   <section class="actions" aria-label="Save">
     <button class="primary" id="btnSave" disabled>Save DKEntries upload</button>
     <button id="btnCopy" disabled>Copy CSV</button>
@@ -173,7 +189,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     <summary>Upload it to DraftKings</summary>
     <ol>
       <li>On DraftKings, open My Contests &rarr; Upcoming &rarr; Edit Entries for this slate.</li>
-      <li>Choose Upload and pick the saved <code>DKEntries_&hellip;_top1.csv</code>.</li>
+      <li>Choose Upload and pick the saved <code>DKEntries_&hellip;.csv</code>.</li>
       <li>Check that each entry shows the captain listed here, then confirm.</li>
       <li>Keep the pick log if you track results: it records which rows you played.</li>
     </ol>
@@ -277,9 +293,117 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
   }
 
   function renderExample() {
-    $('lineups').innerHTML = `<div class="lu"><div class="rk">&ndash;</div><div class="players"><span class="hint">Your lineups appear here: rows 1&ndash;5 of the Sim Savant export in Top 1% order, with player names, salary and stack from your DKEntries file.</span></div><div class="meta"></div></div>`;
+    $('lineups').innerHTML = `<div class="lu"><div class="rk">&ndash;</div><div class="players"><span class="hint">Your lineups appear here, picked by the method above, with player names, salary and stack from your DKEntries file.</span></div><div class="meta"></div></div>`;
     check([['warn', 'Add your Sim Savant export and DKEntries.csv to fill tonight\'s entries.']]);
   }
+
+  // ---------- core51: port of the engine's nhlsd/universe.py + selectors.core51 ----------
+  // Uses only pre-lock columns. Teams and goalies are solved from the export itself
+  // (exactly as the engine does), so the picks match the engine's scored core51.
+  function solveLS(A, b, n) {   // least squares via normal equations (+ tiny ridge), Gaussian elimination with pivoting
+    const M = Array.from({ length: n }, () => new Float64Array(n + 1));
+    for (const [w, y] of A) { for (const [i, wi] of w) { M[i][n] += wi * y; for (const [j, wj] of w) M[i][j] += wi * wj; } }
+    for (let i = 0; i < n; i++) M[i][i] += 1e-9;
+    for (let c = 0; c < n; c++) {
+      let p = c; for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+      [M[c], M[p]] = [M[p], M[c]];
+      const d = M[c][c]; if (Math.abs(d) < 1e-12) continue;
+      for (let k = c; k <= n; k++) M[c][k] /= d;
+      for (let r = 0; r < n; r++) if (r !== c && M[r][c]) { const f = M[r][c]; for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k]; }
+    }
+    return Array.from({ length: n }, (_, i) => M[i][n]);
+  }
+  function buildModel(U) {
+    const cpts = new Set(), flexes = new Set(), co = new Set();
+    for (const lu of U) { const c = +lu.cpt; cpts.add(c); for (const f of lu.flex) { flexes.add(+f); co.add(c + '|' + f); } }
+    const diffs = new Map();
+    for (const c of cpts) for (const f of flexes) { const d = c - f; if (d >= 30 && d <= 90 && !co.has(c + '|' + f)) diffs.set(d, (diffs.get(d) || 0) + 1); }
+    let modal = 56, best = -1; for (const [d, k] of diffs) if (k > best) { best = k; modal = d; }
+    const c2f = {};
+    for (const c of cpts) {
+      let m = c - modal;
+      if (!(flexes.has(m) && !co.has(c + '|' + m))) for (let d = 1; d <= 15; d++) if (flexes.has(c - d) && !co.has(c + '|' + (c - d))) { m = c - d; break; }
+      c2f[String(c)] = String(m);
+    }
+    for (const f of flexes) c2f[String(f)] = String(f);
+    const fids = [...new Set(Object.values(c2f).map(Number))].sort((a, b) => a - b).map(String);
+    const idx = Object.fromEntries(fids.map((f, i) => [f, i])), n = fids.length;
+    const cptc = {}, flexc = {}; const rowsW = [];
+    for (const lu of U) {
+      const cf = c2f[lu.cpt]; cptc[cf] = (cptc[cf] || 0) + 1;
+      const w = [[idx[cf], 1.5], ...lu.flex.map(f => { flexc[f] = (flexc[f] || 0) + 1; return [idx[f], 1]; })];
+      rowsW.push(w);
+    }
+    const sal = solveLS(U.map((lu, k) => [rowsW[k], lu.sal || 0]), null, n).map(s => Math.round(s / 100) * 100);
+    const proj = solveLS(U.map((lu, k) => [rowsW[k], lu.proj || 0]), null, n);
+    let anchor = 0, mx = -1; fids.forEach((f, i) => { const t = (cptc[f] || 0) + (flexc[f] || 0); if (t > mx) { mx = t; anchor = i; } });
+    const T = U.filter(lu => lu.stack === '3/3').map(lu => [[c2f[lu.cpt], ...lu.flex].map(f => [idx[f], 1]), 0]);
+    T.push([[[anchor, 1e3]], 1e3]);
+    const t = solveLS(T, null, n);
+    const team = Object.fromEntries(fids.map(f => [f, t[idx[f]] >= 0 ? 'A' : 'B']));
+    const goalies = new Set();
+    for (const tm of ['A', 'B']) {
+      const cand = fids.filter(f => team[f] === tm), hi = cand.filter(f => sal[idx[f]] >= 9000);
+      if (hi.length) goalies.add(hi.reduce((a, b) => proj[idx[b]] / sal[idx[b]] < proj[idx[a]] / sal[idx[a]] ? b : a));
+      else if (cand.length) goalies.add(cand.reduce((a, b) => sal[idx[b]] > sal[idx[a]] ? b : a));
+    }
+    const P = Object.fromEntries(fids.map(f => [f, { fid: f, team: team[f], g: goalies.has(f), sal: sal[idx[f]], proj: proj[idx[f]], cpt: cptc[f] || 0 }]));
+    const info = {};
+    for (const tm of ['A', 'B']) {
+      const tp = fids.filter(f => team[f] === tm).map(f => P[f]);
+      const g = tp.find(p => p.g) || null;
+      const sk = tp.filter(p => !p.g).sort((a, b) => (b.cpt - a.cpt) || (b.proj - a.proj));
+      const s2 = sk[1] ? sk[1].proj : 0, s5 = sk[4] ? sk[4].proj : 0;
+      const crunch = sk.length >= 3 && g ? Math.round(sk[0].sal * 1.5) + sk[1].sal + sk[2].sal + g.sal + 4000 > 50000 : false;
+      const top4 = tp.filter(p => !p.g).sort((a, b) => (b.sal - a.sal) || (b.proj - a.proj)).slice(0, 4);
+      info[tm] = { top2: new Set(sk.slice(0, 2).map(p => p.fid)), top6: new Set(sk.slice(0, 6).map(p => p.fid)), top4: new Set(top4.map(p => p.fid)),
+        heavy: s2 >= 11.2 || (s2 - s5) >= 2.0, crunch };
+    }
+    return { U, c2f, P, info };
+  }
+  function passesV22(m, lu, main, opp, strict) {
+    const info = m.info[main], cf = m.c2f[lu.cpt], cp = m.P[cf], fp = lu.flex.map(f => m.P[f]);
+    const all = [cp, ...fp]; const tc = { A: 0, B: 0 }; all.forEach(p => tc[p.team]++);
+    if (tc[main] !== 5 || tc[opp] !== 1) return false;
+    if (cp.team !== main || Math.round(cp.sal * 1.5) < 11400 || (lu.sal || 0) < 49400 || cp.g) return false;
+    const fg = fp.filter(p => p.g);
+    if (info.crunch && strict) { if (fg.length) return false; }
+    else if (fg.length !== 1 || fg[0].team !== main) return false;
+    const stack = all.filter(p => p.team === main && !p.g).map(p => p.fid);
+    if (info.crunch && strict) { for (const f of info.top4) if (!stack.includes(f)) return false; }
+    else if (info.heavy && strict) { for (const f of info.top2) if (!stack.includes(f)) return false; }
+    else if (stack.filter(f => info.top6.has(f)).length < 3 || !info.top6.has(cf)) return false;
+    const minBB = (info.crunch && strict) ? 3000 : ((info.heavy && strict) ? 5200 : 3400);
+    for (const p of fp) if (p.team === opp && (p.g || p.sal < minBB)) return false;
+    return true;
+  }
+  function primaryTeam(m) {
+    const avg = (t, o) => { const pool = m.U.filter(lu => passesV22(m, lu, t, o, true)).map((lu, i) => [lu, i]).sort((a, b) => (b[0].proj - a[0].proj) || (a[1] - b[1])).slice(0, 20); return pool.length ? pool.reduce((s, x) => s + x[0].proj, 0) / pool.length : 0; };
+    return avg('A', 'B') >= avg('B', 'A') ? 'A' : 'B';
+  }
+  function core51(U, n) {
+    const m = buildModel(U), prim = primaryTeam(m), sec = prim === 'A' ? 'B' : 'A';
+    const ranked = [...U].sort((a, b) => ((b.top1 ?? 0) * 100000 - b.row) - ((a.top1 ?? 0) * 100000 - a.row));
+    const np = n === 5 ? 3 : Math.round(n * 0.6), ns = n === 5 ? 2 : n - np, cap = n === 5 ? 1 : 4;
+    const out = [];
+    for (const [tm, need] of [[prim, np], [sec, ns]]) {
+      const cc = {}; let got = 0;
+      for (const lu of ranked) {
+        if (got >= need) break;
+        const cf = m.c2f[lu.cpt], cp = m.P[cf], fp = lu.flex.map(f => m.P[f]);
+        const cnt = [cp, ...fp].filter(p => p.team === tm).length;
+        if (cnt !== 5 || cp.team !== tm || cp.g) continue;
+        if (!fp.some(p => p.g && p.team === tm)) continue;
+        if ((cc[lu.cpt] || 0) >= cap) continue;
+        cc[lu.cpt] = (cc[lu.cpt] || 0) + 1; out.push(lu); got++;
+      }
+    }
+    return out;
+  }
+  window.__filler = { core51, parseUniverse };   // test hook
+
+  const METHODS = { core51: 'core51', top_rows: 'Top 1% rows' };
+  let method = (() => { try { return localStorage.getItem('sf_method') || 'core51'; } catch (_) { return 'core51'; } })();
 
   function run() {
     const out = []; state.picks = []; state.csv = '';
@@ -303,8 +427,13 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
       groups = Object.values(by);
     }
     const need = groups.length ? Math.max(...groups.map(g => g.entries.length)) : 5;
-    const picks = ranked.slice(0, need);
-    if (ranked[need] && picks.length && ranked[need].top1Raw === picks[picks.length - 1].top1Raw)
+    let picks;
+    if (method === 'core51') {
+      picks = core51(U, need);
+      out.push(picks.length < need ? ['bad', `core51 found only ${picks.length} qualifying lineups for ${need} entries. Switch to Top 1% rows for this slate.`]
+        : ['ok', `core51: ${picks.length} lineups, all 5-1 stacks with that team's goalie, split ${need === 5 ? '3/2' : Math.round(need * 0.6) + '/' + (need - Math.round(need * 0.6))} across the two teams.`]);
+    } else picks = ranked.slice(0, need);
+    if (method === 'top_rows' && ranked[need] && picks.length && ranked[need].top1Raw === picks[picks.length - 1].top1Raw)
       out.push(['warn', `Tie at the cutoff: row ${ranked[need].row} has the same Top 1% (${ranked[need].top1Raw}) as your last pick. The export's own order decides it, which can differ from sorting in the app.`]);
 
     const P = D ? D.pool : null;
@@ -327,7 +456,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     // Render sheet
     const name = id => P && P[id] ? P[id] : { name: id, team: '', pos: '' };
     $('slateName').textContent = state.slate || 'Your slate';
-    $('sheetBadge').textContent = `Top 1% rows 1–${picks.length}`; $('sheetBadge').className = 'badge';
+    $('sheetBadge').textContent = method === 'core51' ? `core51 · ${picks.length} lineups` : `Top 1% rows 1–${picks.length}`; $('sheetBadge').className = 'badge';
     $('lineups').innerHTML = picks.map((l, i) => {
       const c = name(l.cpt), fs = l.flex.map(name);
       const sal = P ? [l.cpt, ...l.flex].reduce((s, id) => s + (P[id].sal || 0), 0) : l.sal;
@@ -424,6 +553,15 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     e.target.value = ''; renderDKs(); run();
     if (added.length && gh.token) pushDKs(added);
   });
+  function setMethod(m) {
+    method = METHODS[m] ? m : 'core51';
+    try { localStorage.setItem('sf_method', method); } catch (_) {}
+    document.querySelectorAll('.seg [data-m]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.m === method)));
+    run();
+  }
+  document.querySelectorAll('.seg [data-m]').forEach(b => b.addEventListener('click', () => setMethod(b.dataset.m)));
+  document.querySelectorAll('.seg [data-m]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.m === method)));
+
   renderDKs();
   if (dks.length) { const today = dks.filter(r => r.day === new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })); useDK((today[0] || dks[dks.length - 1])); }
 
@@ -562,7 +700,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     if (!state.dk || !state.uni || !(await canStore())) return;
     const meta = slateMeta(), now = new Date(), ts = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
     let sha = null; try { const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(state.uniText)); sha = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join(''); } catch (_) {}
-    const log = { created_utc: now.toISOString(), slate: meta.dir, selector: 'top_rows', n: state.picks.length, universe_file: state.uniName, universe_sha256: sha,
+    const log = { created_utc: now.toISOString(), slate: meta.dir, selector: method, n: state.picks.length, universe_file: state.uniName, universe_sha256: sha,
       picks: state.picks.map(l => ({ row: l.row, cpt: l.cpt, flex: l.flex, proj: l.proj, top1: l.top1, sal: l.sal })) };
     let index = {}; try { index = JSON.parse(await readRepoFile('data/live_index.json') || '{}'); } catch (_) { index = {}; }
     meta.json.contest_ids.forEach(id => { index[id] = meta.dir; });
@@ -572,9 +710,9 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
         [`data/slates/${meta.dir}/universe.csv`]: state.uniText,
         [`data/slates/${meta.dir}/dkentries.csv`]: state.dkText,
         [`data/slates/${meta.dir}/slate.json`]: JSON.stringify(meta.json, null, 1) + '\n',
-        [`logs/${ts}_${meta.dir}_top_rows_${state.picks.length}.json`]: JSON.stringify(log, null, 1) + '\n',
+        [`logs/${ts}_${meta.dir}_${method}_${state.picks.length}.json`]: JSON.stringify(log, null, 1) + '\n',
         'data/live_index.json': JSON.stringify(index, null, 1) + '\n',
-      }, `${meta.json.matchup} pre-lock: universe, DKEntries, Top 1% picks (from Showdown Entry Filler)`);
+      }, `${meta.json.matchup} pre-lock: universe, DKEntries, ${METHODS[method]} picks (from Showdown Entry Filler)`);
       sync(`Saved ${meta.json.matchup} to your repo at ${now.toLocaleTimeString()}, before lock.`, 'ok');
     } catch (e) { sync('Slate not saved to your repo: ' + ghReason(e), 'bad'); }
   }
@@ -631,7 +769,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
   $('btnForget').addEventListener('click', () => { LS.del('sf_token'); gh.token = ''; sync('Disconnected. The token is removed from this browser.'); showConn(); });
   showConn();
 
-  $('btnSave').addEventListener('click', () => { offer(`DKEntries_${slug()}_${stamp()}_top1.csv`, state.csv); storeSlate(); });
+  $('btnSave').addEventListener('click', () => { offer(`DKEntries_${slug()}_${stamp()}_${method === 'core51' ? 'core51' : 'top1'}.csv`, state.csv); storeSlate(); });
   $('btnCopy').addEventListener('click', async () => {
     $('csvOut').hidden = false;
     try { await navigator.clipboard.writeText(state.csv); $('msg').textContent = 'CSV copied.'; $('msg').className = 'msg ok'; }
@@ -640,7 +778,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
   $('btnLog').addEventListener('click', async () => {
     let sha = null;
     try { const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(state.uniText)); sha = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join(''); } catch (_) {}
-    const log = { created_utc: new Date().toISOString(), slate: state.slate, selector: 'top_rows', universe_file: state.uniName, universe_sha256: sha,
+    const log = { created_utc: new Date().toISOString(), slate: state.slate, selector: method, universe_file: state.uniName, universe_sha256: sha,
       dkentries_file: state.dkName, picks: state.picks.map(l => ({ row: l.row, cpt: l.cpt, flex: l.flex, top1: l.top1Raw, proj: l.proj })) };
     offer(`picklog_${slug()}_${stamp()}_top1.json`, JSON.stringify(log, null, 1));
   });
