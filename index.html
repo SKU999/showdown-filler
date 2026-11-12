@@ -313,7 +313,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     }
     return Array.from({ length: n }, (_, i) => M[i][n]);
   }
-  function buildModel(U) {
+  function buildModel(U, pool) {
     const cpts = new Set(), flexes = new Set(), co = new Set();
     for (const lu of U) { const c = +lu.cpt; cpts.add(c); for (const f of lu.flex) { flexes.add(+f); co.add(c + '|' + f); } }
     const diffs = new Map();
@@ -347,6 +347,14 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
       if (hi.length) goalies.add(hi.reduce((a, b) => proj[idx[b]] / sal[idx[b]] < proj[idx[a]] / sal[idx[a]] ? b : a));
       else if (cand.length) goalies.add(cand.reduce((a, b) => sal[idx[b]] > sal[idx[a]] ? b : a));
     }
+    // DKEntries lists real positions: use them for goalies instead of the salary guess
+    // (the guess took Lafreniere for NYR's goalie on Nov 7 and 11, and Jackson Blake for CAR's on Nov 12).
+    let gSource = 'guessed';
+    if (pool) {
+      if (fids.every(f => pool[f])) {
+        goalies.clear(); fids.filter(f => pool[f].pos === 'G').forEach(f => goalies.add(f)); gSource = 'dk';
+      }
+    }
     const P = Object.fromEntries(fids.map(f => [f, { fid: f, team: team[f], g: goalies.has(f), sal: sal[idx[f]], proj: proj[idx[f]], cpt: cptc[f] || 0 }]));
     const info = {};
     for (const tm of ['A', 'B']) {
@@ -359,7 +367,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
       info[tm] = { top2: new Set(sk.slice(0, 2).map(p => p.fid)), top6: new Set(sk.slice(0, 6).map(p => p.fid)), top4: new Set(top4.map(p => p.fid)),
         heavy: s2 >= 11.2 || (s2 - s5) >= 2.0, crunch };
     }
-    return { U, c2f, P, info };
+    return { U, c2f, P, info, gSource };
   }
   function passesV22(m, lu, main, opp, strict) {
     const info = m.info[main], cf = m.c2f[lu.cpt], cp = m.P[cf], fp = lu.flex.map(f => m.P[f]);
@@ -381,8 +389,8 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     const avg = (t, o) => { const pool = m.U.filter(lu => passesV22(m, lu, t, o, true)).map((lu, i) => [lu, i]).sort((a, b) => (b[0].proj - a[0].proj) || (a[1] - b[1])).slice(0, 20); return pool.length ? pool.reduce((s, x) => s + x[0].proj, 0) / pool.length : 0; };
     return avg('A', 'B') >= avg('B', 'A') ? 'A' : 'B';
   }
-  function core51(U, n) {
-    const m = buildModel(U), prim = primaryTeam(m), sec = prim === 'A' ? 'B' : 'A';
+  function core51(U, n, pool) {
+    const m = buildModel(U, pool), prim = primaryTeam(m), sec = prim === 'A' ? 'B' : 'A';
     const ranked = [...U].sort((a, b) => ((b.top1 ?? 0) * 100000 - b.row) - ((a.top1 ?? 0) * 100000 - a.row));
     const np = n === 5 ? 3 : Math.round(n * 0.6), ns = n === 5 ? 2 : n - np, cap = n === 5 ? 1 : 4;
     const out = [];
@@ -398,6 +406,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
         cc[lu.cpt] = (cc[lu.cpt] || 0) + 1; out.push(lu); got++;
       }
     }
+    out.goalies = m.gSource === 'dk' ? Object.values(m.P).filter(p => p.g).map(p => pool[p.fid].name + ' (' + pool[p.fid].team + ')') : null;
     return out;
   }
   window.__filler = { core51, parseUniverse };   // test hook
@@ -429,7 +438,9 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     const need = groups.length ? Math.max(...groups.map(g => g.entries.length)) : 5;
     let picks;
     if (method === 'core51') {
-      picks = core51(U, need);
+      picks = core51(U, need, D ? D.pool : null);
+      out.push(picks.goalies ? ['ok', `Goalies from DKEntries: ${esc(picks.goalies.join(', '))}.`]
+        : ['warn', 'Goalies were guessed from the export (no DKEntries positions). Add DKEntries.csv before saving.']);
       out.push(picks.length < need ? ['bad', `core51 found only ${picks.length} qualifying lineups for ${need} entries. Switch to Top 1% rows for this slate.`]
         : ['ok', `core51: ${picks.length} lineups, all 5-1 stacks with that team's goalie, split ${need === 5 ? '3/2' : Math.round(need * 0.6) + '/' + (need - Math.round(need * 0.6))} across the two teams.`]);
     } else picks = ranked.slice(0, need);
