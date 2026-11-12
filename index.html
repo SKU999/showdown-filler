@@ -76,7 +76,7 @@ input[type=file]::file-selector-button { font: 600 .85rem var(--body); border: 1
 .sheet-head .slate { font: 700 1.5rem/1 var(--display); text-transform: uppercase }
 .badge { font: 600 .72rem var(--body); letter-spacing: .08em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: var(--chip); color: var(--muted) }
 .badge.example { background: transparent; border: 1px solid var(--warn); color: var(--warn) }
-.lu { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px 12px; padding: 12px 14px; border-top: 1px solid var(--line); align-items: start }
+.lu { display: grid; grid-template-columns: minmax(44px, max-content) 1fr auto; gap: 10px 12px; padding: 12px 14px; border-top: 1px solid var(--line); align-items: start }
 .lu:first-of-type { border-top: 0 }
 .lu .rk { font: 700 1.6rem/1 var(--display); color: var(--red); font-variant-numeric: tabular-nums }
 .lu .rk small { display: block; font: 500 .7rem var(--mono); color: var(--muted); margin-top: 4px }
@@ -102,7 +102,7 @@ details summary { cursor: pointer; font-weight: 600 }
 details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; color: var(--muted) }
 .method { display: grid; gap: 6px }
 .mlabel { font: 600 .74rem var(--body); text-transform: uppercase; letter-spacing: .08em; color: var(--muted) }
-.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface) }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface) }
 .seg button { border: 0; border-radius: 0; padding: 10px 12px; text-align: left; display: grid; gap: 2px; background: var(--surface); color: var(--ink) }
 .seg button + button { border-left: 1px solid var(--line) }
 .seg button small { font: 400 .76rem var(--body); color: var(--muted) }
@@ -128,7 +128,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
 .hint.bad { color: var(--bad) }
 .board .pos { color: var(--ok) } .board .neg { color: var(--bad) }
 .board caption { text-align: left; padding: 10px; font-weight: 600 }
-@media (max-width: 520px) { .lu { grid-template-columns: 34px 1fr } .lu .meta { grid-column: 2; text-align: left } h1 { font-size: 1.9rem } }
+@media (max-width: 520px) { .lu { grid-template-columns: minmax(34px, max-content) 1fr } .lu .meta { grid-column: 2; text-align: left } h1 { font-size: 1.9rem } }
 @media (prefers-reduced-motion: no-preference) { .drop { transition: border-color .2s } }
 </style>
 </head>
@@ -172,7 +172,8 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
   <section class="method" aria-label="Method">
     <span class="mlabel" id="mlabel">Method</span>
     <div class="seg" role="radiogroup" aria-labelledby="mlabel">
-      <button type="button" role="radio" data-m="core51" id="mCore">core51<small>5-1 + own goalie, 3/2 split</small></button>
+      <button type="button" role="radio" data-m="core51alt" id="mAlt">core51 alt<small>core51, alternating Top 1% / P90</small></button>
+      <button type="button" role="radio" data-m="core51" id="mCore">core51<small>5-1 + own goalie, Top 1% only</small></button>
       <button type="button" role="radio" data-m="top_rows" id="mTop">Top 1% rows<small>first rows of the export</small></button>
     </div>
   </section>
@@ -251,13 +252,13 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     const h = rows[0] || [];
     if (h[0] !== 'CPT') throw new Error('This does not look like a Sim Savant lineup export (first column should be CPT).');
     const iTop1 = h.findIndex(x => x.startsWith('Top 1%'));
-    const iSal = h.indexOf('Salary'), iStack = h.indexOf('Stack'), iProj = h.indexOf('Proj');
+    const iSal = h.indexOf('Salary'), iStack = h.indexOf('Stack'), iProj = h.indexOf('Proj'), iP90 = h.indexOf('P90');
     if (iTop1 < 0) throw new Error('No "Top 1%" column in this export.');
     const lineups = [];
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i]; if (!r || !r[0] || !r[0].trim()) continue;
       lineups.push({ row: lineups.length + 1, cpt: idOf(r[0]), flex: r.slice(1, 6).map(idOf), top1Raw: (r[iTop1] || '').trim(),
-        top1: num(r[iTop1]), sal: num(r[iSal]), stack: (r[iStack] || '').trim(), proj: num(r[iProj]) });
+        top1: num(r[iTop1]), sal: num(r[iSal]), stack: (r[iStack] || '').trim(), proj: num(r[iProj]), p90: iP90 >= 0 ? num(r[iP90]) : null });
     }
     return lineups;
   }
@@ -409,10 +410,42 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     out.goalies = m.gSource === 'dk' ? Object.values(m.P).filter(p => p.g).map(p => pool[p.fid].name + ' (' + pool[p.fid].team + ')') : null;
     return out;
   }
-  window.__filler = { core51, parseUniverse };   // test hook
+  // core51alt (played from Nov 13, 2026): core51's rules, picks alternating between the Top 1% order and the
+  // P90 (ceiling) order, per team side. Port of the engine's selectors.core51alt.
+  function core51alt(U, n, pool) {
+    const m = buildModel(U, pool), prim = primaryTeam(m), sec = prim === 'A' ? 'B' : 'A';
+    const orders = [[...U].sort((a, b) => ((b.top1 ?? 0) * 100000 - b.row) - ((a.top1 ?? 0) * 100000 - a.row)),
+                    [...U].sort((a, b) => ((b.p90 ?? 0) * 100000 - b.row) - ((a.p90 ?? 0) * 100000 - a.row))];
+    const np = n === 5 ? 3 : Math.round(n * 0.6), ns = n === 5 ? 2 : n - np, cap = n === 5 ? 1 : 4;
+    const out = [], used = new Set();
+    const ok = (lu, tm) => {
+      const cp = m.P[m.c2f[lu.cpt]], fp = lu.flex.map(f => m.P[f]);
+      return [cp, ...fp].filter(p => p.team === tm).length === 5 && cp.team === tm && !cp.g && fp.some(p => p.g && p.team === tm);
+    };
+    for (const [tm, need] of [[prim, np], [sec, ns]]) {
+      const cc = {}, ptr = [0, 0]; let got = 0, stuck = 0;
+      while (got < need && stuck < orders.length) {
+        stuck = 0;
+        for (let i = 0; i < orders.length; i++) {
+          if (got >= need) break;
+          let took = false;
+          while (ptr[i] < orders[i].length) {
+            const lu = orders[i][ptr[i]++];
+            if (used.has(lu.row) || !ok(lu, tm) || (cc[lu.cpt] || 0) >= cap) continue;
+            cc[lu.cpt] = (cc[lu.cpt] || 0) + 1; used.add(lu.row); out.push(lu); got++; took = true; break;
+          }
+          if (!took) stuck++;
+        }
+      }
+    }
+    out.goalies = m.gSource === 'dk' ? Object.values(m.P).filter(p => p.g).map(p => pool[p.fid].name + ' (' + pool[p.fid].team + ')') : null;
+    return out;
+  }
+  window.__filler = { core51, core51alt, parseUniverse };   // test hook
 
-  const METHODS = { core51: 'core51', top_rows: 'Top 1% rows' };
-  let method = (() => { try { return localStorage.getItem('sf_method') || 'core51'; } catch (_) { return 'core51'; } })();
+  const METHODS = { core51alt: 'core51 alt', core51: 'core51', top_rows: 'Top 1% rows' };
+  // sf_method2: core51alt became the default on Nov 13, 2026 (earlier choices stored under sf_method are ignored)
+  let method = (() => { try { const m = localStorage.getItem('sf_method2'); return m in METHODS ? m : 'core51alt'; } catch (_) { return 'core51alt'; } })();
 
   function run() {
     const out = []; state.picks = []; state.csv = '';
@@ -437,12 +470,13 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     }
     const need = groups.length ? Math.max(...groups.map(g => g.entries.length)) : 5;
     let picks;
-    if (method === 'core51') {
-      picks = core51(U, need, D ? D.pool : null);
+    if (method === 'core51' || method === 'core51alt') {
+      if (method === 'core51alt' && U.every(lu => lu.p90 == null)) out.push(['bad', 'No P90 column in this export: core51 alt needs it. Re-export from Sim Savant, or pick core51.']);
+      picks = (method === 'core51alt' ? core51alt : core51)(U, need, D ? D.pool : null);
       out.push(picks.goalies ? ['ok', `Goalies from DKEntries: ${esc(picks.goalies.join(', '))}.`]
         : ['warn', 'Goalies were guessed from the export (no DKEntries positions). Add DKEntries.csv before saving.']);
       out.push(picks.length < need ? ['bad', `core51 found only ${picks.length} qualifying lineups for ${need} entries. Switch to Top 1% rows for this slate.`]
-        : ['ok', `core51: ${picks.length} lineups, all 5-1 stacks with that team's goalie, split ${need === 5 ? '3/2' : Math.round(need * 0.6) + '/' + (need - Math.round(need * 0.6))} across the two teams.`]);
+        : ['ok', `${METHODS[method]}: ${picks.length} lineups, all 5-1 stacks with that team's goalie, split ${need === 5 ? '3/2' : Math.round(need * 0.6) + '/' + (need - Math.round(need * 0.6))} across the two teams.`]);
     } else picks = ranked.slice(0, need);
     if (method === 'top_rows' && ranked[need] && picks.length && ranked[need].top1Raw === picks[picks.length - 1].top1Raw)
       out.push(['warn', `Tie at the cutoff: row ${ranked[need].row} has the same Top 1% (${ranked[need].top1Raw}) as your last pick. The export's own order decides it, which can differ from sorting in the app.`]);
@@ -467,7 +501,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     // Render sheet
     const name = id => P && P[id] ? P[id] : { name: id, team: '', pos: '' };
     $('slateName').textContent = state.slate || 'Your slate';
-    $('sheetBadge').textContent = method === 'core51' ? `core51 · ${picks.length} lineups` : `Top 1% rows 1–${picks.length}`; $('sheetBadge').className = 'badge';
+    $('sheetBadge').textContent = method !== 'top_rows' ? `${METHODS[method]} · ${picks.length} lineups` : `Top 1% rows 1–${picks.length}`; $('sheetBadge').className = 'badge';
     $('lineups').innerHTML = picks.map((l, i) => {
       const c = name(l.cpt), fs = l.flex.map(name);
       const sal = P ? [l.cpt, ...l.flex].reduce((s, id) => s + (P[id].sal || 0), 0) : l.sal;
@@ -565,8 +599,8 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     if (added.length && gh.token) pushDKs(added);
   });
   function setMethod(m) {
-    method = METHODS[m] ? m : 'core51';
-    try { localStorage.setItem('sf_method', method); } catch (_) {}
+    method = METHODS[m] ? m : 'core51alt';
+    try { localStorage.setItem('sf_method2', method); } catch (_) {}
     document.querySelectorAll('.seg [data-m]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.m === method)));
     run();
   }
@@ -753,7 +787,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     try {
       const txt = await readRepoFile('scoreboard.json'); if (!txt) { $('board').innerHTML = '<p class="hint">No scoreboard yet. It appears after the first slate with results.</p>'; return; }
       const sb = JSON.parse(txt); const g = sb.groups.out_of_sample || {};
-      const names = { top_rows: 'Top 1% rows', core51: 'core51', top_roi: 'Top ROI', v22: 'v2.2', top_proj: 'Top projection', you: 'Your entries' };
+      const names = { top_rows: 'Top 1% rows', core51: 'core51', core51alt: 'core51 alt (played from Nov 13)', core51p90: 'core51 by P90', top_roi: 'Top ROI', v22: 'v2.2', top_proj: 'Top projection', you: 'Your entries' };
       const rows = Object.entries(g).filter(([, v]) => v.fee).sort((a, b) => (b[1].won - b[1].fee) - (a[1].won - a[1].fee));
       const last = (sb.slates || []).slice(-5).reverse();
       $('board').innerHTML = `<div class="board"><table><caption>Scoreboard: ${sb.n_out_of_sample} fair-test slates · updated ${new Date(sb.updated).toLocaleString()}</caption>
@@ -780,7 +814,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
   $('btnForget').addEventListener('click', () => { LS.del('sf_token'); gh.token = ''; sync('Disconnected. The token is removed from this browser.'); showConn(); });
   showConn();
 
-  $('btnSave').addEventListener('click', () => { offer(`DKEntries_${slug()}_${stamp()}_${method === 'core51' ? 'core51' : 'top1'}.csv`, state.csv); storeSlate(); });
+  $('btnSave').addEventListener('click', () => { offer(`DKEntries_${slug()}_${stamp()}_${method === 'top_rows' ? 'top1' : method}.csv`, state.csv); storeSlate(); });
   $('btnCopy').addEventListener('click', async () => {
     $('csvOut').hidden = false;
     try { await navigator.clipboard.writeText(state.csv); $('msg').textContent = 'CSV copied.'; $('msg').className = 'msg ok'; }
