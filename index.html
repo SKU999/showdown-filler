@@ -410,7 +410,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     out.goalies = m.gSource === 'dk' ? Object.values(m.P).filter(p => p.g).map(p => pool[p.fid].name + ' (' + pool[p.fid].team + ')') : null;
     return out;
   }
-  // core51alt (played from Nov 13, 2026): core51's rules, picks alternating between the Top 1% order and the
+  // core51alt (played from Nov 12, 2026): core51's rules, picks alternating between the Top 1% order and the
   // P90 (ceiling) order, per team side. Port of the engine's selectors.core51alt.
   function core51alt(U, n, pool) {
     const m = buildModel(U, pool), prim = primaryTeam(m), sec = prim === 'A' ? 'B' : 'A';
@@ -444,7 +444,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
   window.__filler = { core51, core51alt, parseUniverse };   // test hook
 
   const METHODS = { core51alt: 'core51 alt', core51: 'core51', top_rows: 'Top 1% rows' };
-  // sf_method2: core51alt became the default on Nov 13, 2026 (earlier choices stored under sf_method are ignored)
+  // sf_method2: core51alt became the default on Nov 12, 2026 (earlier choices stored under sf_method are ignored)
   let method = (() => { try { const m = localStorage.getItem('sf_method2'); return m in METHODS ? m : 'core51alt'; } catch (_) { return 'core51alt'; } })();
 
   function run() {
@@ -787,7 +787,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     try {
       const txt = await readRepoFile('scoreboard.json'); if (!txt) { $('board').innerHTML = '<p class="hint">No scoreboard yet. It appears after the first slate with results.</p>'; return; }
       const sb = JSON.parse(txt); const g = sb.groups.out_of_sample || {};
-      const names = { top_rows: 'Top 1% rows', core51: 'core51', core51alt: 'core51 alt (played from Nov 13)', core51p90: 'core51 by P90', top_roi: 'Top ROI', v22: 'v2.2', top_proj: 'Top projection', you: 'Your entries' };
+      const names = { top_rows: 'Top 1% rows', core51: 'core51', core51alt: 'core51 alt (played from Nov 12)', core51p90: 'core51 by P90', top_roi: 'Top ROI', v22: 'v2.2', top_proj: 'Top projection', you: 'Your entries' };
       const rows = Object.entries(g).filter(([, v]) => v.fee).sort((a, b) => (b[1].won - b[1].fee) - (a[1].won - a[1].fee));
       const last = (sb.slates || []).slice(-5).reverse();
       $('board').innerHTML = `<div class="board"><table><caption>Scoreboard: ${sb.n_out_of_sample} fair-test slates · updated ${new Date(sb.updated).toLocaleString()}</caption>
