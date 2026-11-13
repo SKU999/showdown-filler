@@ -650,8 +650,10 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
   $('ghRepo').value = gh.repo;
   const sync = (t, k = '') => { $('syncMsg').textContent = t; $('syncMsg').className = 'msg' + (k ? ' ' + k : ''); };
   async function api(path, opts = {}) {
-    const r = await fetch(`https://api.github.com/repos/${gh.repo}${path}`, { ...opts, headers: { Authorization: `Bearer ${gh.token}`, Accept: 'application/vnd.github+json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
-    if (!r.ok) { const e = new Error(`GitHub said ${r.status}`); e.status = r.status; throw e; }
+    let r;
+    try { r = await fetch(`https://api.github.com/repos/${gh.repo}${path}`, { ...opts, headers: { Authorization: `Bearer ${gh.token}`, Accept: 'application/vnd.github+json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } }); }
+    catch (err) { const e = new Error(`no response (${err && err.message || err}) at ${(opts.method || 'GET')} ${path.split('?')[0] || '/'}`); e.network = true; throw e; }
+    if (!r.ok) { let msg = ''; try { msg = (await r.json()).message || ''; } catch (_) {} const e = new Error(`GitHub said ${r.status}${msg ? ': ' + msg : ''} at ${(opts.method || 'GET')} ${path.split('?')[0] || '/'}`); e.status = r.status; throw e; }
     return r.status === 204 ? null : r.json();
   }
   function b64(text) { const bytes = new TextEncoder().encode(text); let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); }
@@ -660,7 +662,7 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     catch (e) { if (e.status === 404) return null; throw e; }
   }
   async function commitFiles(files, message) {   // files: {path: text}
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {   // retries a dropped connection or a moved branch (422)
       try {
         const ref = await api('/git/ref/heads/main');
         const base = await api(`/git/commits/${ref.object.sha}`);
@@ -673,12 +675,15 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
         const c = await api('/git/commits', { method: 'POST', body: JSON.stringify({ message, tree: t.sha, parents: [ref.object.sha] }) });
         await api('/git/refs/heads/main', { method: 'PATCH', body: JSON.stringify({ sha: c.sha }) });
         return c;
-      } catch (e) { if (attempt === 1 || e.status !== 422) throw e; }
+      } catch (e) {
+        if (attempt === 2 || !(e.status === 422 || e.network || e.status >= 500)) throw e;
+        await new Promise(res => setTimeout(res, 2000 * (attempt + 1)));
+      }
     }
   }
-  const ghReason = e => e.status === 401 ? 'The token was refused. Make a new one and connect again.'
-    : e.status === 403 || e.status === 404 ? 'The token cannot write to that repo. Check the repo name and that the token has Contents: Read and write on it.'
-    : 'Could not reach GitHub. Check your connection and try again.';
+  const ghReason = e => e.status === 401 ? 'The token was refused. Make a new one and connect again.' + (e.message ? ` [${e.message}]` : '')
+    : e.status === 403 || e.status === 404 ? 'The token cannot write to that repo. Check the repo name and that the token has Contents: Read and write on it.' + (e.message ? ` [${e.message}]` : '')
+    : 'Could not reach GitHub (tried 3 times). Check your connection and try again.' + (e && e.message ? ` [${e.message}]` : '');
 
   function slateMeta() {
     const D = state.dk; const P = D.pool;
