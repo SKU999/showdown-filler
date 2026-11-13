@@ -792,6 +792,14 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; colo
     try {
       const txt = await readRepoFile('scoreboard.json'); if (!txt) { $('board').innerHTML = '<p class="hint">No scoreboard yet. It appears after the first slate with results.</p>'; return; }
       const sb = JSON.parse(txt); const g = sb.groups.out_of_sample || {};
+      if (sb.tracker) {   // simple tracker: one row per core51 alt slate, net per method, total at the bottom
+        const T = sb.tracker, c = v => v == null ? '<td>–</td>' : `<td class="${v >= 0 ? 'pos' : 'neg'}">${money(v)}</td>`;
+        $('board').innerHTML = `<div class="board"><table><caption>core51 alt: slate ${T.rows.length} of ${T.of} · real money in "You" · updated ${new Date(sb.updated).toLocaleString()}</caption>
+          <tr><th>#</th><th>Game</th>${T.cols.map(([, n]) => `<th>${esc(n)}</th>`).join('')}</tr>
+          ${T.rows.map(r => `<tr><td>${r.n}</td><td>${esc(r.matchup)} <span class="hint">${esc(r.date.slice(5))}</span></td>${T.cols.map(([k]) => c(r.nets[k])).join('')}</tr>`).join('')}
+          <tr><td></td><td><b>Total</b></td>${T.cols.map(([k]) => c(T.total[k])).join('')}</tr></table></div>`;
+        return;
+      }
       const names = { top_rows: 'Top 1% rows', core51: 'core51', core51alt: 'core51 alt (played from Nov 12)', core51p90: 'core51 by P90', top_roi: 'Top ROI', v22: 'v2.2', top_proj: 'Top projection', you: 'Your entries' };
       const rows = Object.entries(g).filter(([, v]) => v.fee).sort((a, b) => (b[1].won - b[1].fee) - (a[1].won - a[1].fee));
       const last = (sb.slates || []).slice(-5).reverse();
